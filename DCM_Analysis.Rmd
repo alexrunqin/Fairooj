@@ -1,0 +1,190 @@
+---
+title: "DCM_Cardiomyocyte_Analysis"
+output: html_document
+date: "2024-10-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+load("GSE183852_DCM_Integrated.Robj")
+```
+
+```{r}
+CM_Seurat <- subset(RefMerge, idents = "Cardiomyocytes")
+RidgePlot(CM_Seurat, features = "PDPN")
+FeaturePlot(CM_Seurat, features = "PDPN", split.by = "condition")
+
+# Create a new metadata column based on marker expression
+CM_Seurat$PDPN_status <- ifelse(CM_Seurat[["SCT"]]@data["PDPN", ] > 0.5, 
+                                     "PDPN+", 
+                                     "PDPN-")
+
+VlnPlot(CM_Seurat, features = "PDPN")
+
+(subset(CM_Seurat, idents = "Donor")[["SCT"]]@data["PDPN", ]) |> hist()
+(subset(CM_Seurat, idents = "DCM")[["SCT"]]@data["PDPN", ]) |> hist()
+
+Idents(CM_Seurat) <- "condition"
+# Run DE analysis between MarkerX_positive and MarkerX_negative cells
+de_results <- FindMarkers(CM_Seurat, ident.1 = "PDPN+", ident.2 = "PDPN-", logfc.threshold = 0,
+                          min.pct = 0)
+means <- rowMeans(GetAssay(CM_Seurat, "SCT")@data) |> 
+  as.data.frame() |>
+  tibble::rownames_to_column("GENE_SYMBOL")
+
+de_results <- de_results |>
+  tibble::rownames_to_column("GENE_SYMBOL") |>
+  dplyr::inner_join(means, by = "GENE_SYMBOL")
+
+ggplot(de_results, aes(x = `rowMeans(GetAssay(CM_Seurat, "SCT")@data)`, y = avg_log2FC, colour = ifelse(.data$p_val_adj < 0.05 & abs(.data$avg_log2FC) > 0.25, "yes", "no"))) +
+  geom_point() +
+  ylim(-0.5, 0.5)
+
+```
+
+```{r}
+library(Seurat)
+# Visualize QC metrics as a violin plot
+BoxPlot(CM_Seurat, features = c("nFeature_RNA", "nCount_RNA"))
+
+tmp <- colSums(GetAssay(CM_Seurat, "RNA")@counts)
+boxplot(tmp ~ CM_Seurat$PDPN_status)
+aov(tmp ~ CM_Seurat$PDPN_status + CM_Seurat$condition) |> summary()
+
+variance <- colVars(as.matrix(GetAssay(CM_Seurat, "SCT")@data))
+cv <- colSds(as.matrix(GetAssay(CM_Seurat, "SCT")@data))/colMeans(as.matrix(GetAssay(CM_Seurat, "SCT")@data))
+cmeans <- colMeans(as.matrix(GetAssay(CM_Seurat, "SCT")@data))
+
+boxplot(cmeans ~ CM_Seurat$PDPN_status)
+lm(variance ~ CM_Seurat$PDPN_status + CM_Seurat$condition) |> summary()
+```
+
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)  # Use appropriate annotation package for your organism
+
+```
+
+```{r}
+# Set thresholds for significance (adjust p-value and log fold change as needed)
+deg_genes <- de_results$GENE_SYMBOL[de_results$p_val_adj < 0.05 & abs(de_results$avg_log2FC) > 0.25]
+
+# View the number of DEGs
+length(deg_genes)
+
+```
+
+```{r}
+# Perform GO enrichment analysis
+go_enrichment <- enrichGO(gene = deg_genes,
+                          OrgDb = org.Hs.eg.db,
+                          keyType = "SYMBOL",
+                          ont = "BP",  # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component), or "ALL"
+                          pAdjustMethod = "BH",
+                          pvalueCutoff = 0.05,
+                          qvalueCutoff = 0.2,
+                          minGSSize = 2)  # Convert Entrez IDs back to gene symbols
+
+```
+
+```{r}
+# Dot plot for GO enrichment
+dotplot(go_enrichment, showCategory = 50)
+mutate(go_enrichment, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+```
+
+```{r}
+de_results$logpval <- -log10(de_results$p_val)
+de_results$sign_logpval <- de_results$logpval * sign(de_results$avg_log2FC)
+
+geneList <- de_results$sign_logpval[order(de_results$sign_logpval, decreasing = TRUE)]
+names(geneList) <- de_results$GENE_SYMBOL[order(de_results$sign_logpval, decreasing = TRUE)]
+
+geneList[1] = 999
+
+gsea <- gseGO(geneList=geneList, 
+               ont ="ALL", 
+               keyType = "SYMBOL", 
+               # nPerm = 10000, 
+               minGSSize = 3, 
+               maxGSSize = 800, 
+               pvalueCutoff = 0.05, 
+               verbose = TRUE, 
+               OrgDb = "org.Hs.eg.db", 
+               pAdjustMethod = "BH")
+```
+
+```{r}
+# Dot plot for GO enrichment
+dotplot(gsea, showCategory = 50)
+mutate(go_enrichment, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+
+edox2 <- pairwise_termsim(gsea)
+p1 <- treeplot(edox2)
+p2 <- treeplot(edox2, hclust_method = "average")
+aplot::plot_list(p1, p2, tag_levels='A')
+```
+
+```{r}
+# Dot plot for GO enrichment
+dotplot(gsea, showCategory = 50)
+
+
+edox2 <- pairwise_termsim(gsea)
+p1 <- treeplot(edox2)
+p2 <- treeplot(edox2, hclust_method = "average")
+aplot::plot_list(p1, p2, tag_levels='A')
+```
+
+```{r}
+# Load necessary libraries
+library(Seurat)
+
+# Specify the gene and metadata column of interest
+gene_of_interest <- "PDPN"  # Replace with your actual gene name
+metadata_column <- "condition"  # Replace with the column name in your metadata slot
+
+# Extract expression data and metadata information
+gene_expression <- FetchData(CM_Seurat, vars = gene_of_interest)[[gene_of_interest]]
+metadata_values <- CM_Seurat@meta.data[[metadata_column]]
+
+# Divide gene expression based on the metadata column
+expression_group1 <- gene_expression[metadata_values == "Donor"]  # Replace "Group1" with the first group value
+expression_group2 <- gene_expression[metadata_values == "DCM"]  # Replace "Group2" with the second group value
+
+mean(expression_group1 > 0)
+mean(expression_group2 > 0)
+
+# Plot histograms
+par(mfrow = c(1, 2))  # Set up plotting area for 2 side-by-side plots
+
+hist(expression_group1, 
+     main = paste("Expression of", gene_of_interest, "in Group 1"), 
+     xlab = "Expression Level", 
+     ylab = "Frequency", 
+     col = "skyblue", 
+     border = "white")
+
+hist(expression_group2, 
+     main = paste("Expression of", gene_of_interest, "in Group 2"), 
+     xlab = "Expression Level", 
+     ylab = "Frequency", 
+     col = "salmon", 
+     border = "white")
+
+# Reset plotting layout
+par(mfrow = c(1, 1))
+
+```
+
+
+
+
+
+

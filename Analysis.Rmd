@@ -1,0 +1,313 @@
+---
+title: "IMC Analysis"
+output: html_document
+date: "2023-11-07"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  comment = "#>"
+)
+```
+
+ [1] "ROI005" "ROI006" "ROI019" "ROI020" "ROI021" "ROI027" "ROI032" "ROI033" "ROI034"
+[10] "ROI042" "ROI047" "ROI049" "ROI050" "ROI053" "ROI057" "ROI064" "ROI074" "ROI080"
+[19] "ROI086" "ROI87"  "ROI96"  "ROI099" "ROI102" "ROI105" "ROI111" "ROI115" "ROI123"
+[28] "ROI124" "ROI131" "ROI010" "ROI039"
+
+```{r}
+library(SingleCellExperiment)
+library(FlowSOM) 
+library(FuseSOM)
+library(scater)
+library(scMerge)
+library(ggplot2)
+library(dplyr)
+
+exclusion <- c("ROI005", "ROI006", "ROI019", "ROI020", "ROI021", "ROI027", "ROI032", "ROI033", "ROI034", "ROI042", "ROI047", "ROI049", "ROI050", "ROI053", "ROI057", "ROI064", "ROI074", "ROI080", "ROI086", "ROI087", "ROI096", "ROI099", "ROI102", "ROI105", "ROI111", "ROI115", "ROI123", "ROI124", "ROI131", "ROI010", "ROI039")
+
+annot <- read.csv("Data/cell.dat.Annotation.csv")
+
+## Original data csv file
+cellDat <- read.csv("Data/cell.dat.csv")
+BC <- read.csv("Data/cell.dat.BC.csv")
+
+data2 <- read.csv("Data/data2.csv")
+
+names(cellDat) <- gsub(".*_.*_(.*)\\.ome", "\\1", names(cellDat))
+sample.meta <- read.csv("Data/sample.metadata.csv")
+
+cellDat <- left_join(cellDat, sample.meta, by = "ROI")
+
+names(BC) <- gsub(".*_.*_(.*)\\.ome", "\\1", names(BC))
+
+ggplot(cellDat, aes(x = sqrt(SMA), colour = Batch)) +
+  geom_density() +
+  theme(legend.position = "none") +
+  xlim(0,2) +
+  labs(x = "SMA", y = "Density by Image")
+
+ggplot(BC, aes(x = sqrt(SMA), colour = ROI)) +
+  geom_density() +
+  theme(legend.position = "none") +
+  xlim(-2,4) +
+  labs(x = "SMA", y = "Density by Image")
+
+sce <- SingleCellExperiment(assay = list(intensities = t(cellDat[,6:44])),
+                            colData = data.frame(cellDat[, 1:5], cellDat[45:51]))
+sceBC <- SingleCellExperiment(assay = list(intensities = t(BC[,13:51])),
+                              colData = BC[, 1:12])
+
+```
+
+
+```{r}
+sce <- simpleSeg::normalizeCells(sce,
+  transformation = "asinh",
+  method = c(
+    "trim99",
+    "mean",
+    # "minMax",
+    "PC1"),
+  assayIn = "intensities",
+  cores = nCores,
+  imageID = "ROI"
+)
+
+exprs_mat = SummarizedExperiment::assay(sce, 'intensities')
+# result = scSEGIndex(exprs_mat = exprs_mat)
+
+# sce <- runTSNE(sce,
+#                exprs_values = "intensities")
+# 
+# sce <- runTSNE(sce,
+#                exprs_values = "norm",
+#                name = "correctedTSNE")
+# 
+sceBC <- simpleSeg::normalizeCells(sceBC,
+  transformation = "asinh",
+  method = c("trim99", "mean", "PC1"),
+  assayIn = "intensities",
+  cores = nCores,
+  imageID = "ROI"
+)
+# 
+# sceBC <- runTSNE(sceBC,
+#                exprs_values = "intensities")
+
+# Extract normalised marker information.
+df1 <- as.data.frame(cbind(colData(sce), t(assay(sce, "norm"))))
+df2 <- as.data.frame(cbind(colData(sce), t(assay(sce, "intensities"))))
+
+
+
+# Plots densities of normalised PanKRT for each image.
+ggplot(df1, aes(x = ACTN2, color = Batch)) +
+  geom_density() 
+  # theme(legend.position = "none")
+
+# ggplot(df4, aes(x = ACTN2, colour = Batch)) +
+#   geom_density() + xlim(-1,5)
+
+# Plots densities of normalised PanKRT for each image.
+ggplot(df2, aes(x = ACTN2, colour = Batch)) +
+  geom_density() + xlim(-1,5)
+
+
+annotSCE <- SingleCellExperiment(assay = list(intensities = t(annot[13:51])),
+                                              # logtrans = t(annot[52:67]),
+                                              # scaled = t(annot[68:83]))
+                                 colData = DataFrame(annot[1:12], annot[84:88])
+                                 )
+
+annotSCE <- simpleSeg::normalizeCells(annotSCE,
+  transformation = "asinh",
+  method = c("trim99", "mean", "PC1"),
+  assayIn = "intensities",
+  cores = nCores,
+  imageID = "ROI"
+)
+rownames(annotSCE) <- gsub(".*_.*_(.*)\\.ome", "\\1", rownames(annotSCE))
+
+cellTypeMarkers <- gsub(".*_.*_(.*)\\.ome", "\\1", colnames(annot[,68:83])) 
+cellTypeMarkers <- sapply(strsplit(cellTypeMarkers, "_"), function(x) x[1])
+
+
+## ANNOT SCE
+# Extract normalised marker information.
+df3 <- as.data.frame(cbind(colData(annotSCE), t(assay(annotSCE, "norm"))))
+df4 <- as.data.frame(cbind(colData(annotSCE), t(assay(annotSCE, "intensities"))))
+
+# Plots densities of normalised PanKRT for each image.
+ggplot(df3, aes(x = SMA, color = Batch)) +
+  geom_density() 
+  # theme(legend.position = "none")
+
+
+# plotTSNE(sce, colour_by = "Batch")
+
+# Extract normalised marker information.
+df <- as.data.frame(cbind(colData(sceBC), t(assay(sceBC, "intensities"))))
+
+# Plots densities of normalised PanKRT for each image.
+ggplot(df, aes(x = SMA, colour = ROI)) +
+  geom_density() +
+  # xlim(.9, 1) +
+  theme(legend.position = "none")
+
+ggplot(df, aes(x = SMA, colour = Batch)) +
+  geom_density() +
+  theme(legend.position = "none") +
+  xlim(-2,4) +
+  labs(x = "SMA", y = "Density by Image")
+
+```
+
+```{r}
+# sce <- runTSNE(sce,
+#                exprs_values = "norm",
+#                name = "correctedTSNE")
+# 
+# sceBC <- runTSNE(sceBC,
+#                exprs_values = "norm",
+#                name = "correctedTSNE")
+```
+
+```{r}
+# plotTSNE(sce, colour_by = "Batch")
+# 
+# plotReducedDim(sceBC, "correctedTSNE", colour_by = "Batch")
+# plotReducedDim(sceBC, "TSNE", colour_by = "Batch")
+# 
+# plotReducedDim(sce, "correctedTSNE", colour_by = "Batch")
+# plotReducedDim(sce, "TSNE", colour_by = "Batch")
+```
+```{r}
+sce <- FuseSOM::runFuseSOM(sce, assay = "norm", numClusters = 8)
+sce <- FuseSOM::estimateNumCluster(sce, kSeq = 2:50)
+sce@metadata$clusterEstimation$Discriminant
+
+
+sce = runPCA(sce, exprs_values = "norm")
+
+scater::plotPCA(sce, 
+                colour_by = "clusters", 
+                shape_by = "Batch")
+
+# plotReducedDim(sce, "correctedTSNE", colour_by = "clusters")
+
+markers <- rownames(sce)
+
+scater::plotGroupedHeatmap(sce,
+  features = cellTypeMarkers,
+  group = "clusters",
+  exprs_values = "norm",
+  center = TRUE,
+  scale = TRUE,
+  zlim = c(-3, 3),
+  cluster_rows = FALSE,
+  block = "clusters" #block is needed because of a current bug in the function.
+)
+
+# scater::plotGroupedHeatmap(sceBC,
+#   features = markers,
+#   group = "clusters",
+#   exprs_values = "intensities",
+#   center = TRUE,
+#   scale = TRUE,
+#   zlim = c(-3, 3),
+#   cluster_rows = FALSE,
+#   block = "clusters" #block is needed because of a current bug in the function.
+# )
+
+```
+
+```{r}
+
+
+
+
+# reducedDim(annotSCE, "old_tSNE") <- as.matrix(data.frame(annotSCE$FItSNE_X, annotSCE$FItSNE_Y))
+annotSCE$FlowSOM_metacluster <- annotSCE$FlowSOM_metacluster |> as.factor()
+annotSCE$Annotated.metacluster <- annotSCE$Annotated.metacluster |> as.factor()
+
+# plotReducedDim(annotSCE, "old_tSNE", colour_by = "FlowSOM_metacluster")
+```
+```{r}
+
+
+scater::plotGroupedHeatmap(annotSCE,
+  features = cellTypeMarkers,
+  group = "FlowSOM_metacluster",
+  exprs_values = "norm",
+  center = TRUE,
+  scale = TRUE,
+  zlim = c(-3, 3),
+  cluster_rows = FALSE,
+  block = "FlowSOM_metacluster" #block is needed because of a current bug in the functi
+)
+```
+```{r}
+annotSCE = runUMAP(annotSCE, exprs_values = "intensities")
+
+sce <- runPCA(sce, exprs_values = "intensities", name = "intensityPCA")
+sce <- runPCA(sce, exprs_values = "norm", name = "normPCA")
+sceBC <- runPCA(sceBC, exprs_values = "intensities")
+
+# PCA for Batch corrected (non-transformed) intensities
+scater::plotPCA(
+  sceBC, 
+  colour_by = "Batch")
+
+# PCA for raw intensities
+scater::plotReducedDim(
+  sce, 
+  "intensityPCA",
+  colour_by = "Batch")
+
+# PCA for normalised intensities
+scater::plotReducedDim(
+  sce, 
+  "normPCA",
+  colour_by = "Batch")
+
+
+
+scater::plotGroupedHeatmap(sce,
+  features = cellTypeMarkers,
+  group = "clusters",
+  exprs_values = "norm",
+  center = TRUE,
+  scale = TRUE,
+  zlim = c(-3, 3),
+  cluster_rows = FALSE,
+  block = "clusters" #block is needed because of a current bug in the functi
+)
+
+scater::plotGroupedHeatmap(annotSCE,
+  features = cellTypeMarkers,
+  group = "FlowSOM_metacluster",
+  exprs_values = "norm",
+  center = TRUE,
+  scale = TRUE,
+  zlim = c(-3, 3),
+  cluster_rows = FALSE,
+  block = "FlowSOM_metacluster" #block is needed because of a current bug in the functi
+)
+
+annotSCE$FlowSOM_metacluster <- paste0("cluster_", annotSCE$FlowSOM_metacluster)
+
+```
+
+
+```{r}
+# tmpDF <- data.frame(as.data.frame(colData(sce)),
+#                     as.data.frame(t(assay(sce, "norm"))))
+# 
+# write.csv(tmpDF, file = "normalisedDF.csv")
+
+```
+
+
+
